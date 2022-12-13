@@ -6,6 +6,9 @@ use std::marker::PhantomData;
 use std::str::FromStr;
 use thiserror::Error;
 
+// evaluatee, condition -> bool
+type OperatorFn = dyn Fn(Option<&Value>, &Value) -> bool;
+
 #[derive(Debug)]
 pub enum Op<T>
 where
@@ -64,13 +67,13 @@ where
         }
     }
 
-    pub fn evaluate(&self, value: &Value) -> Result<bool, QueryError> {
+    pub fn evaluate(&self, value: Option<&Value>) -> Result<bool, QueryError> {
         self.evaluate_with_custom_ops(value, &HashMap::new())
     }
     pub fn evaluate_with_custom_ops(
         &self,
-        value: &Value,
-        custom_ops: &HashMap<String, &dyn Fn(&Value, &Value) -> bool>,
+        value: Option<&Value>,
+        custom_ops: &HashMap<String, &OperatorFn>,
     ) -> Result<bool, QueryError> {
         let mut ops = T::get_operators();
         for (op_name, op) in custom_ops {
@@ -81,33 +84,39 @@ where
     }
     fn evaluate_with_ops(
         &self,
-        value: &Value,
-        ops: &HashMap<String, &dyn Fn(&Value, &Value) -> bool>, // evaluatee, condition -> bool
+        value: Option<&Value>,
+        ops: &HashMap<String, &OperatorFn>,
     ) -> Result<bool, QueryError> {
         Ok(match self {
-            Op::NullScalar => value.is_null(),
+            Op::NullScalar => value.map(|v| v.is_null()).unwrap_or(false),
             Op::NumericScalar(n) => {
-                if let Value::Number(input) = value {
+                if let Some(Value::Number(input)) = value {
                     input == n
                 } else {
                     false
                 }
             }
             Op::BooleanScalar(b) => {
-                if let Value::Bool(input) = value {
+                if let Some(Value::Bool(input)) = value {
                     input == b
                 } else {
                     false
                 }
             }
             Op::StringScalar(s) => {
-                if let Value::String(input) = value {
+                if let Some(Value::String(input)) = value {
                     input == s
                 } else {
                     false
                 }
             }
-            Op::Sequence(seq) => seq.contains(value),
+            Op::Sequence(seq) => {
+                if let Some(v) = value {
+                    seq.contains(v)
+                } else {
+                    false
+                }
+            }
             Op::Compound(compound) => {
                 for cond in compound {
                     if cond.evaluate(value, ops)? == false {
@@ -160,8 +169,8 @@ where
     }
     fn evaluate(
         &self,
-        value: &Value,
-        ops: &HashMap<String, &dyn (Fn(&Value, &Value) -> bool)>,
+        value: Option<&Value>,
+        ops: &HashMap<String, &OperatorFn>,
     ) -> Result<bool, QueryError> {
         Ok(match self {
             Condition::And(operators) => {
@@ -191,22 +200,17 @@ where
             Condition::Not { op } => !op.evaluate_with_ops(value, ops)?,
             Condition::Field { field_name, op } => {
                 let field = extract(value, &field_name.split('.').collect::<Vec<_>>());
-                if let Some(field) = field {
-                    op.evaluate_with_ops(&field, ops)?
-                } else {
-                    false
-                }
+                op.evaluate_with_ops(field.as_ref(), ops)?
             }
             Condition::Operator {
                 operator,
                 condition,
             } => {
-                // TODO: do better error handling than this
-                let op: &dyn Fn(&Value, &Value) -> bool =
-                    *ops.get(operator)
-                        .ok_or_else(|| QueryError::UnsupportedOperator {
-                            operator: operator.clone(),
-                        })?;
+                let op = *ops
+                    .get(operator)
+                    .ok_or_else(|| QueryError::UnsupportedOperator {
+                        operator: operator.clone(),
+                    })?;
                 op(value, condition)
             }
         })
@@ -214,7 +218,7 @@ where
 }
 
 pub trait OperatorProvider: Debug {
-    fn get_operators() -> HashMap<String, &'static dyn Fn(&Value, &Value) -> bool>;
+    fn get_operators() -> HashMap<String, &'static dyn Fn(Option<&Value>, &Value) -> bool>;
 }
 
 pub trait Querier {
@@ -228,13 +232,14 @@ pub trait Querier {
 #[derive(Debug)]
 pub struct BaseOperators {}
 impl BaseOperators {
-    fn eq(evaluatee: &Value, condition: &Value) -> bool {
-        evaluatee == condition
+    fn eq(evaluatee: Option<&Value>, condition: &Value) -> bool {
+        evaluatee.map(|e| e == condition).unwrap_or(false)
     }
 }
 impl OperatorProvider for BaseOperators {
-    fn get_operators() -> HashMap<String, &'static dyn Fn(&Value, &Value) -> bool> {
-        let mut map: HashMap<String, &'static dyn Fn(&Value, &Value) -> bool> = HashMap::new();
+    fn get_operators() -> HashMap<String, &'static dyn Fn(Option<&Value>, &Value) -> bool> {
+        let mut map: HashMap<String, &'static dyn Fn(Option<&Value>, &Value) -> bool> =
+            HashMap::new();
         map.insert("eq".into(), &BaseOperators::eq);
         map
     }
@@ -245,27 +250,32 @@ impl Querier for BaseQuerier {
     type Provider = BaseOperators;
 }
 
-fn extract(entry: &Value, path: &[&str]) -> Option<Value> {
+// TODO: maybe apply Cow?
+fn extract(entry: Option<&Value>, path: &[&str]) -> Option<Value> {
     if path.is_empty() {
-        return Some(entry.to_owned());
+        return entry.map(|x| x.clone());
     }
-    match entry {
-        Value::Null => Some(Value::Null),
-        Value::Array(arr) => {
-            if let Ok(v) = i64::from_str(path[0]) {
-                // index-based indexing
-                extract(arr.get(v as usize)?, &path[1..])
-            } else {
-                // key-based nested document parallel indexing
-                let mut v = Vec::with_capacity(arr.len());
-                for e in arr.iter() {
-                    v.push(extract(e, path)?);
+    if let Some(value) = entry {
+        match value {
+            Value::Null => Some(Value::Null),
+            Value::Array(arr) => {
+                if let Ok(v) = i64::from_str(path[0]) {
+                    // index-based indexing
+                    extract(arr.get(v as usize), &path[1..])
+                } else {
+                    // key-based nested document parallel indexing
+                    let mut v = Vec::with_capacity(arr.len());
+                    for e in arr.iter() {
+                        v.push(extract(Some(e), path)?);
+                    }
+                    Some(Value::Array(v))
                 }
-                Some(Value::Array(v))
             }
+            Value::Object(obj) => extract(obj.get(path[0]), &path[1..]),
+            _ => None,
         }
-        Value::Object(obj) => extract(obj.get(path[0])?, &path[1..]),
-        _ => None,
+    } else {
+        None
     }
 }
 fn compound_condition_from_value<T>(v: &Value) -> Vec<Op<T>>
@@ -322,22 +332,22 @@ mod test {
         let query = BaseQuerier::new(&json!(
             {"item": "journal"}
         ));
-        assert!(query.evaluate(&doc).unwrap());
+        assert!(query.evaluate(Some(&doc)).unwrap());
 
         let query = BaseQuerier::new(&json!(
             {"size": {"h": 14}}
         ));
-        assert!(query.evaluate(&doc).unwrap());
+        assert!(query.evaluate(Some(&doc)).unwrap());
     }
 
     #[test]
     fn test_query_match_empty_values() {
         let doc = json!({ "item": "journal", "qty": 25, "size": { "h": 14, "w": 21, "uom": "cm" }, "status": "A" });
         let query = BaseQuerier::new(&json!({}));
-        assert!(query.evaluate(&doc).unwrap());
+        assert!(query.evaluate(Some(&doc)).unwrap());
 
         let doc = Value::Null;
         let query = BaseQuerier::new(&Value::Null);
-        assert!(query.evaluate(&doc).unwrap());
+        assert!(query.evaluate(Some(&doc)).unwrap());
     }
 }
