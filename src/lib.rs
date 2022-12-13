@@ -1,28 +1,39 @@
 use serde_json::{Map, Number, Value};
+use std::collections::HashMap;
+use std::convert::Infallible;
+use std::fmt::Debug;
+use std::marker::PhantomData;
 use std::str::FromStr;
 
 #[derive(Debug)]
-pub enum Op {
+pub enum Op<T>
+where
+    T: OperatorProvider,
+{
     NullScalar,
     NumericScalar(Number),
     BooleanScalar(bool),
     StringScalar(String),
     Sequence(Vec<Value>),
-    Compound(Vec<Condition>),
+    Compound(Vec<Condition<T>>),
+    _Marker(Infallible, PhantomData<T>),
 }
 
 #[derive(Debug)]
-pub enum Condition {
-    And(Vec<Op>),
-    Or(Vec<Op>),
-    Nor(Vec<Op>),
+pub enum Condition<T>
+where
+    T: OperatorProvider,
+{
+    And(Vec<Op<T>>),
+    Or(Vec<Op<T>>),
+    Nor(Vec<Op<T>>),
     Not {
-        op: Op,
+        op: Op<T>,
     },
-    /// Conditional evaluation on Field
+    /// Condition evaluation on Field
     Field {
         field_name: String,
-        op: Op,
+        op: Op<T>,
     },
     /// Non-compound operators that start with $
     Operator {
@@ -31,8 +42,11 @@ pub enum Condition {
     },
 }
 
-impl Op {
-    pub fn from_value(v: &Value) -> Op {
+impl<T> Op<T>
+where
+    T: OperatorProvider,
+{
+    fn from_value(v: &Value) -> Op<T> {
         match v {
             Value::Null => Op::NullScalar,
             Value::Bool(b) => Op::BooleanScalar(*b),
@@ -44,6 +58,25 @@ impl Op {
     }
 
     pub fn evaluate(&self, value: &Value) -> bool {
+        self.evaluate_with_custom_ops(value, &HashMap::new())
+    }
+    pub fn evaluate_with_custom_ops(
+        &self,
+        value: &Value,
+        custom_ops: &HashMap<String, &dyn Fn(&Value, &Value) -> bool>,
+    ) -> bool {
+        let mut ops = T::get_operators();
+        for (op_name, op) in custom_ops {
+            ops.insert(op_name.clone(), *op);
+        }
+
+        self.evaluate_with_ops(value, &ops)
+    }
+    fn evaluate_with_ops(
+        &self,
+        value: &Value,
+        ops: &HashMap<String, &dyn Fn(&Value, &Value) -> bool>, // evaluatee, condition -> bool
+    ) -> bool {
         match self {
             Op::NullScalar => value.is_null(),
             Op::NumericScalar(n) => {
@@ -70,13 +103,17 @@ impl Op {
             Op::Sequence(seq) => seq.contains(value),
             Op::Compound(compound) => compound
                 .iter()
-                .fold(true, |acc, x| acc && x.evaluate(value)),
+                .fold(true, |acc, x| acc && x.evaluate(value, ops)),
+            Op::_Marker(..) => unreachable!("marker variant will never be constructed"),
         }
     }
 }
 
-impl Condition {
-    pub fn from_map(map: &Map<String, Value>) -> Vec<Condition> {
+impl<T> Condition<T>
+where
+    T: OperatorProvider,
+{
+    fn from_map(map: &Map<String, Value>) -> Vec<Condition<T>> {
         let mut v = Vec::with_capacity(map.len());
         for (operator, condition) in map.iter() {
             match operator.as_str() {
@@ -109,22 +146,26 @@ impl Condition {
         }
         v
     }
-    pub fn evaluate(&self, value: &Value) -> bool {
+    fn evaluate(
+        &self,
+        value: &Value,
+        ops: &HashMap<String, &dyn (Fn(&Value, &Value) -> bool)>,
+    ) -> bool {
         match self {
             Condition::And(operators) => operators
                 .iter()
-                .fold(true, |acc, x| acc && x.evaluate(value)),
+                .fold(true, |acc, x| acc && x.evaluate_with_ops(value, ops)),
             Condition::Or(operators) => operators
                 .iter()
-                .fold(false, |acc, x| acc || x.evaluate(value)),
+                .fold(false, |acc, x| acc || x.evaluate_with_ops(value, ops)),
             Condition::Nor(operators) => operators
                 .iter()
-                .fold(true, |acc, x| acc && !x.evaluate(value)),
-            Condition::Not { op } => !op.evaluate(value),
+                .fold(true, |acc, x| acc && !x.evaluate_with_ops(value, ops)),
+            Condition::Not { op } => !op.evaluate_with_ops(value, ops),
             Condition::Field { field_name, op } => {
                 let field = extract(value, &field_name.split(".").collect::<Vec<_>>());
                 if let Some(field) = field {
-                    op.evaluate(&field)
+                    op.evaluate_with_ops(&field, ops)
                 } else {
                     false
                 }
@@ -133,10 +174,44 @@ impl Condition {
                 operator,
                 condition,
             } => {
-                unimplemented!("operator unimplemented")
+                // TODO: do better error handling than this
+                let op: &dyn Fn(&Value, &Value) -> bool = *ops.get(operator).unwrap();
+                op(value, condition)
             }
         }
     }
+}
+
+pub trait OperatorProvider: Debug {
+    fn get_operators() -> HashMap<String, &'static dyn Fn(&Value, &Value) -> bool>;
+}
+
+pub trait Querier {
+    type Provider: OperatorProvider;
+
+    fn new(query: &Value) -> Op<Self::Provider> {
+        Op::from_value(query)
+    }
+}
+
+#[derive(Debug)]
+pub struct BaseOperators {}
+impl BaseOperators {
+    fn eq(evaluatee: &Value, condition: &Value) -> bool {
+        evaluatee == condition
+    }
+}
+impl OperatorProvider for BaseOperators {
+    fn get_operators() -> HashMap<String, &'static dyn Fn(&Value, &Value) -> bool> {
+        let mut map: HashMap<String, &'static dyn Fn(&Value, &Value) -> bool> = HashMap::new();
+        map.insert("eq".into(), &BaseOperators::eq);
+        map
+    }
+}
+
+pub struct BaseQuerier {}
+impl Querier for BaseQuerier {
+    type Provider = BaseOperators;
 }
 
 fn extract(entry: &Value, path: &[&str]) -> Option<Value> {
@@ -162,7 +237,10 @@ fn extract(entry: &Value, path: &[&str]) -> Option<Value> {
         _ => None,
     }
 }
-fn compound_condition_from_value(v: &Value) -> Vec<Op> {
+fn compound_condition_from_value<T>(v: &Value) -> Vec<Op<T>>
+where
+    T: OperatorProvider,
+{
     match v {
         Value::Array(vec) => vec.iter().map(Op::from_value).collect(),
         _ => vec![],
@@ -190,32 +268,32 @@ mod test {
             },
             "size.uom": "in"
         });
-        let op = Op::from_value(&v);
+        let op = BaseQuerier::new(&v);
         println!("{:#?}", op);
     }
 
     #[test]
     fn test_parse_query_2() {
         let v = json!({ "status": "D"});
-        let op = Op::from_value(&v);
+        let op = BaseQuerier::new(&v);
         println!("{:#?}", op);
     }
     #[test]
     fn test_parse_query_3() {
         let v = json!({ "$or": [ { "status": "A" }, { "qty": { "$lt": 30 } } ] });
-        let op = Op::from_value(&v);
+        let op = BaseQuerier::new(&v);
         println!("{:#?}", op);
     }
 
     #[test]
     fn test_query_match_1() {
         let doc = json!({ "item": "journal", "qty": 25, "size": { "h": 14, "w": 21, "uom": "cm" }, "status": "A" });
-        let query = Op::from_value(&json!(
+        let query = BaseQuerier::new(&json!(
             {"item": "journal"}
         ));
         assert!(query.evaluate(&doc));
 
-        let query = Op::from_value(&json!(
+        let query = BaseQuerier::new(&json!(
             {"size": {"h": 14}}
         ));
         assert!(query.evaluate(&doc));
@@ -224,11 +302,11 @@ mod test {
     #[test]
     fn test_query_match_empty_values() {
         let doc = json!({ "item": "journal", "qty": 25, "size": { "h": 14, "w": 21, "uom": "cm" }, "status": "A" });
-        let query = Op::from_value(&json!({}));
+        let query = BaseQuerier::new(&json!({}));
         assert!(query.evaluate(&doc));
 
         let doc = Value::Null;
-        let query = Op::from_value(&Value::Null);
+        let query = BaseQuerier::new(&Value::Null);
         assert!(query.evaluate(&doc));
     }
 }
