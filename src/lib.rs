@@ -4,6 +4,7 @@ use std::convert::Infallible;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::str::FromStr;
+use thiserror::Error;
 
 #[derive(Debug)]
 pub enum Op<T>
@@ -42,6 +43,12 @@ where
     },
 }
 
+#[derive(Error, Debug)]
+pub enum QueryError {
+    #[error("Unsupported operator: {operator}")]
+    UnsupportedOperator { operator: String },
+}
+
 impl<T> Op<T>
 where
     T: OperatorProvider,
@@ -57,14 +64,14 @@ where
         }
     }
 
-    pub fn evaluate(&self, value: &Value) -> bool {
+    pub fn evaluate(&self, value: &Value) -> Result<bool, QueryError> {
         self.evaluate_with_custom_ops(value, &HashMap::new())
     }
     pub fn evaluate_with_custom_ops(
         &self,
         value: &Value,
         custom_ops: &HashMap<String, &dyn Fn(&Value, &Value) -> bool>,
-    ) -> bool {
+    ) -> Result<bool, QueryError> {
         let mut ops = T::get_operators();
         for (op_name, op) in custom_ops {
             ops.insert(op_name.clone(), *op);
@@ -76,8 +83,8 @@ where
         &self,
         value: &Value,
         ops: &HashMap<String, &dyn Fn(&Value, &Value) -> bool>, // evaluatee, condition -> bool
-    ) -> bool {
-        match self {
+    ) -> Result<bool, QueryError> {
+        Ok(match self {
             Op::NullScalar => value.is_null(),
             Op::NumericScalar(n) => {
                 if let Value::Number(input) = value {
@@ -101,9 +108,16 @@ where
                 }
             }
             Op::Sequence(seq) => seq.contains(value),
-            Op::Compound(compound) => compound.iter().all(|x| x.evaluate(value, ops)),
+            Op::Compound(compound) => {
+                for cond in compound {
+                    if cond.evaluate(value, ops)? == false {
+                        return Ok(false);
+                    }
+                }
+                return Ok(true);
+            }
             Op::_Marker(..) => unreachable!("marker variant will never be constructed"),
-        }
+        })
     }
 }
 
@@ -148,16 +162,37 @@ where
         &self,
         value: &Value,
         ops: &HashMap<String, &dyn (Fn(&Value, &Value) -> bool)>,
-    ) -> bool {
-        match self {
-            Condition::And(operators) => operators.iter().all(|x| x.evaluate_with_ops(value, ops)),
-            Condition::Or(operators) => operators.iter().any(|x| x.evaluate_with_ops(value, ops)),
-            Condition::Nor(operators) => operators.iter().all(|x| !x.evaluate_with_ops(value, ops)),
-            Condition::Not { op } => !op.evaluate_with_ops(value, ops),
+    ) -> Result<bool, QueryError> {
+        Ok(match self {
+            Condition::And(operators) => {
+                for op in operators {
+                    if op.evaluate_with_ops(value, ops)? == false {
+                        return Ok(false);
+                    }
+                }
+                return Ok(true);
+            }
+            Condition::Or(operators) => {
+                for op in operators {
+                    if op.evaluate_with_ops(value, ops)? == true {
+                        return Ok(true);
+                    }
+                }
+                return Ok(false);
+            }
+            Condition::Nor(operators) => {
+                for op in operators {
+                    if op.evaluate_with_ops(value, ops)? == true {
+                        return Ok(false);
+                    }
+                }
+                return Ok(true);
+            }
+            Condition::Not { op } => !op.evaluate_with_ops(value, ops)?,
             Condition::Field { field_name, op } => {
                 let field = extract(value, &field_name.split('.').collect::<Vec<_>>());
                 if let Some(field) = field {
-                    op.evaluate_with_ops(&field, ops)
+                    op.evaluate_with_ops(&field, ops)?
                 } else {
                     false
                 }
@@ -167,10 +202,14 @@ where
                 condition,
             } => {
                 // TODO: do better error handling than this
-                let op: &dyn Fn(&Value, &Value) -> bool = *ops.get(operator).unwrap();
+                let op: &dyn Fn(&Value, &Value) -> bool =
+                    *ops.get(operator)
+                        .ok_or_else(|| QueryError::UnsupportedOperator {
+                            operator: operator.clone(),
+                        })?;
                 op(value, condition)
             }
-        }
+        })
     }
 }
 
@@ -283,22 +322,22 @@ mod test {
         let query = BaseQuerier::new(&json!(
             {"item": "journal"}
         ));
-        assert!(query.evaluate(&doc));
+        assert!(query.evaluate(&doc).unwrap());
 
         let query = BaseQuerier::new(&json!(
             {"size": {"h": 14}}
         ));
-        assert!(query.evaluate(&doc));
+        assert!(query.evaluate(&doc).unwrap());
     }
 
     #[test]
     fn test_query_match_empty_values() {
         let doc = json!({ "item": "journal", "qty": 25, "size": { "h": 14, "w": 21, "uom": "cm" }, "status": "A" });
         let query = BaseQuerier::new(&json!({}));
-        assert!(query.evaluate(&doc));
+        assert!(query.evaluate(&doc).unwrap());
 
         let doc = Value::Null;
         let query = BaseQuerier::new(&Value::Null);
-        assert!(query.evaluate(&doc));
+        assert!(query.evaluate(&doc).unwrap());
     }
 }
