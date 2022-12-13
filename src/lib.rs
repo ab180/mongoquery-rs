@@ -101,9 +101,7 @@ where
                 }
             }
             Op::Sequence(seq) => seq.contains(value),
-            Op::Compound(compound) => compound
-                .iter()
-                .fold(true, |acc, x| acc && x.evaluate(value, ops)),
+            Op::Compound(compound) => compound.iter().all(|x| x.evaluate(value, ops)),
             Op::_Marker(..) => unreachable!("marker variant will never be constructed"),
         }
     }
@@ -130,9 +128,9 @@ where
                     op: Op::from_value(condition),
                 }),
                 op => {
-                    if op.starts_with("$") {
+                    if let Some(stripped) = op.strip_prefix("$") {
                         v.push(Condition::Operator {
-                            operator: op[1..].to_string(),
+                            operator: stripped.to_string(),
                             condition: condition.clone(),
                         })
                     } else {
@@ -152,18 +150,12 @@ where
         ops: &HashMap<String, &dyn (Fn(&Value, &Value) -> bool)>,
     ) -> bool {
         match self {
-            Condition::And(operators) => operators
-                .iter()
-                .fold(true, |acc, x| acc && x.evaluate_with_ops(value, ops)),
-            Condition::Or(operators) => operators
-                .iter()
-                .fold(false, |acc, x| acc || x.evaluate_with_ops(value, ops)),
-            Condition::Nor(operators) => operators
-                .iter()
-                .fold(true, |acc, x| acc && !x.evaluate_with_ops(value, ops)),
+            Condition::And(operators) => operators.iter().all(|x| x.evaluate_with_ops(value, ops)),
+            Condition::Or(operators) => operators.iter().any(|x| x.evaluate_with_ops(value, ops)),
+            Condition::Nor(operators) => operators.iter().all(|x| !x.evaluate_with_ops(value, ops)),
             Condition::Not { op } => !op.evaluate_with_ops(value, ops),
             Condition::Field { field_name, op } => {
-                let field = extract(value, &field_name.split(".").collect::<Vec<_>>());
+                let field = extract(value, &field_name.split('.').collect::<Vec<_>>());
                 if let Some(field) = field {
                     op.evaluate_with_ops(&field, ops)
                 } else {
@@ -215,7 +207,7 @@ impl Querier for BaseQuerier {
 }
 
 fn extract(entry: &Value, path: &[&str]) -> Option<Value> {
-    if path.len() == 0 {
+    if path.is_empty() {
         return Some(entry.to_owned());
     }
     match entry {
