@@ -274,6 +274,9 @@ impl BaseOperators {
     fn eq(evaluatee: Option<&Value>, condition: &Value) -> Result<bool, QueryError> {
         Ok(evaluatee.map(|e| e == condition).unwrap_or(false))
     }
+    fn ne(evaluatee: Option<&Value>, condition: &Value) -> Result<bool, QueryError> {
+        Ok(!BaseOperators::eq(evaluatee, condition)?)
+    }
     fn gt(evaluatee: Option<&Value>, condition: &Value) -> Result<bool, QueryError> {
         Ok(if let Some(evaluatee) = evaluatee {
             matches!(
@@ -314,15 +317,45 @@ impl BaseOperators {
             false
         })
     }
+    fn r#in(evaluatee: Option<&Value>, condition: &Value) -> Result<bool, QueryError> {
+        if let Value::Array(cond) = condition {
+            match evaluatee {
+                Some(Value::Array(evaluatee)) => {
+                    for i in cond {
+                        for j in evaluatee {
+                            if i == j {
+                                return Ok(true);
+                            }
+                        }
+                    }
+                    return Ok(false);
+                }
+                Some(v) => Ok(cond.contains(v)),
+                None => Ok(false),
+            }
+        } else {
+            Err(QueryError::OperatorError {
+                operator: "in".to_string(),
+                reason: "condition must be a list".to_string(),
+            })
+        }
+    }
+
+    fn nin(evaluatee: Option<&Value>, condition: &Value) -> Result<bool, QueryError> {
+        Ok(!BaseOperators::r#in(evaluatee, condition)?)
+    }
 }
 impl OperatorProvider for BaseOperators {
     fn get_operators() -> HashMap<String, &'static OperatorFn> {
         let mut map: HashMap<String, &'static OperatorFn> = HashMap::new();
         map.insert("eq".into(), &BaseOperators::eq);
+        map.insert("ne".into(), &BaseOperators::ne);
         map.insert("gt".into(), &BaseOperators::gt);
         map.insert("gte".into(), &BaseOperators::gte);
         map.insert("lt".into(), &BaseOperators::lt);
         map.insert("lte".into(), &BaseOperators::lte);
+        map.insert("in".into(), &BaseOperators::r#in);
+        map.insert("nin".into(), &BaseOperators::nin);
         map
     }
 }

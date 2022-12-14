@@ -62,4 +62,16 @@ fn test_comparison() {
     assert_eq!(all(), query(json!({"qty": {"$gte": 10}}), all()));
     assert_eq!(vec![&*FRUIT], query(json!({"qty": {"$lt": 20}}), all()));
     assert_eq!(vec![&*FRUIT], query(json!({"qty": {"$lte": 10}}), all()));
+
+    assert_eq!(all(), query(json!({"ratings": {"$in": [5, 6]}}), all()));
+    assert_eq!(
+        vec![&*FRUIT],
+        query(json!({"qty": {"$in": [10, 42]}}), all())
+    );
+    assert_eq!(
+        vec![&*FOOD],
+        query(json!({"qty": {"$nin": [10, 42]}}), all())
+    );
+
+    assert_eq!(vec![&*FOOD], query(json!({"qty": {"$ne": 10}}), all()));
 }
