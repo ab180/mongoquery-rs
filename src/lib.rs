@@ -8,7 +8,7 @@ use std::str::FromStr;
 use thiserror::Error;
 
 // evaluatee, condition -> bool
-type OperatorFn = dyn Fn(Option<&Value>, &Value) -> bool;
+type OperatorFn = dyn Fn(Option<&Value>, &Value) -> Result<bool, QueryError>;
 
 #[derive(Debug)]
 pub enum Op<T>
@@ -51,6 +51,8 @@ where
 pub enum QueryError {
     #[error("Unsupported operator: {operator}")]
     UnsupportedOperator { operator: String },
+    #[error("Operator error: {reason} (from {operator}")]
+    OperatorError { operator: String, reason: String },
 }
 
 impl<T> Op<T>
@@ -228,14 +230,14 @@ where
                     .ok_or_else(|| QueryError::UnsupportedOperator {
                         operator: operator.clone(),
                     })?;
-                op(value, condition)
+                op(value, condition)?
             }
         })
     }
 }
 
 pub trait OperatorProvider: Debug {
-    fn get_operators() -> HashMap<String, &'static dyn Fn(Option<&Value>, &Value) -> bool>;
+    fn get_operators() -> HashMap<String, &'static OperatorFn>;
 }
 
 pub trait Querier {
@@ -269,54 +271,53 @@ pub fn value_partial_cmp(lhs: &Value, rhs: &Value) -> Option<Ordering> {
 #[derive(Debug)]
 pub struct BaseOperators {}
 impl BaseOperators {
-    fn eq(evaluatee: Option<&Value>, condition: &Value) -> bool {
-        evaluatee.map(|e| e == condition).unwrap_or(false)
+    fn eq(evaluatee: Option<&Value>, condition: &Value) -> Result<bool, QueryError> {
+        Ok(evaluatee.map(|e| e == condition).unwrap_or(false))
     }
-    fn gt(evaluatee: Option<&Value>, condition: &Value) -> bool {
-        if let Some(evaluatee) = evaluatee {
+    fn gt(evaluatee: Option<&Value>, condition: &Value) -> Result<bool, QueryError> {
+        Ok(if let Some(evaluatee) = evaluatee {
             matches!(
                 value_partial_cmp(evaluatee, condition),
                 Some(Ordering::Greater)
             )
         } else {
             false
-        }
+        })
     }
-    fn gte(evaluatee: Option<&Value>, condition: &Value) -> bool {
-        if let Some(evaluatee) = evaluatee {
+    fn gte(evaluatee: Option<&Value>, condition: &Value) -> Result<bool, QueryError> {
+        Ok(if let Some(evaluatee) = evaluatee {
             matches!(
                 value_partial_cmp(evaluatee, condition),
                 Some(Ordering::Greater | Ordering::Equal)
             )
         } else {
             false
-        }
+        })
     }
-    fn lt(evaluatee: Option<&Value>, condition: &Value) -> bool {
-        if let Some(evaluatee) = evaluatee {
+    fn lt(evaluatee: Option<&Value>, condition: &Value) -> Result<bool, QueryError> {
+        Ok(if let Some(evaluatee) = evaluatee {
             matches!(
                 value_partial_cmp(evaluatee, condition),
                 Some(Ordering::Less)
             )
         } else {
             false
-        }
+        })
     }
-    fn lte(evaluatee: Option<&Value>, condition: &Value) -> bool {
-        if let Some(evaluatee) = evaluatee {
+    fn lte(evaluatee: Option<&Value>, condition: &Value) -> Result<bool, QueryError> {
+        Ok(if let Some(evaluatee) = evaluatee {
             matches!(
                 value_partial_cmp(evaluatee, condition),
                 Some(Ordering::Less | Ordering::Equal)
             )
         } else {
             false
-        }
+        })
     }
 }
 impl OperatorProvider for BaseOperators {
-    fn get_operators() -> HashMap<String, &'static dyn Fn(Option<&Value>, &Value) -> bool> {
-        let mut map: HashMap<String, &'static dyn Fn(Option<&Value>, &Value) -> bool> =
-            HashMap::new();
+    fn get_operators() -> HashMap<String, &'static OperatorFn> {
+        let mut map: HashMap<String, &'static OperatorFn> = HashMap::new();
         map.insert("eq".into(), &BaseOperators::eq);
         map.insert("gt".into(), &BaseOperators::gt);
         map.insert("gte".into(), &BaseOperators::gte);
