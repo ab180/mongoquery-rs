@@ -54,3 +54,12 @@ fn test_simple_lookup() {
         query(json!({"memos.1.memo": "approved"}), all())
     );
 }
+
+#[test]
+fn test_comparison() {
+    assert_eq!(vec![&*FOOD], query(json!({"qty": {"$eq": 25}}), all()));
+    assert_eq!(vec![&*FOOD], query(json!({"qty": {"$gt": 20}}), all()));
+    assert_eq!(all(), query(json!({"qty": {"$gte": 10}}), all()));
+    assert_eq!(vec![&*FRUIT], query(json!({"qty": {"$lt": 20}}), all()));
+    assert_eq!(vec![&*FRUIT], query(json!({"qty": {"$lte": 10}}), all()));
+}

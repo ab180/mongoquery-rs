@@ -1,4 +1,5 @@
 use serde_json::{Map, Number, Value};
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::fmt::Debug;
@@ -245,11 +246,71 @@ pub trait Querier {
     }
 }
 
+pub fn value_partial_cmp(lhs: &Value, rhs: &Value) -> Option<Ordering> {
+    if let (Value::Null, Value::Null) = (lhs, rhs) {
+        Some(Ordering::Equal)
+    } else if let (Value::Bool(lhs), Value::Bool(rhs)) = (lhs, rhs) {
+        lhs.partial_cmp(rhs)
+    } else if let (Value::Number(lhs), Value::Number(rhs)) = (lhs, rhs) {
+        lhs.as_f64()?.partial_cmp(&rhs.as_f64()?)
+    } else if let (Value::String(lhs), Value::String(rhs)) = (lhs, rhs) {
+        lhs.partial_cmp(rhs)
+    } else if let (Value::Array(lhs), Value::Array(rhs)) = (lhs, rhs) {
+        lhs.len().partial_cmp(&rhs.len())
+    } else if let (Value::Bool(_), Value::Number(rhs)) = (lhs, rhs) {
+        (1f64).partial_cmp(&rhs.as_f64()?)
+    } else if let (Value::Number(lhs), Value::Bool(rhs)) = (lhs, rhs) {
+        lhs.as_f64()?.partial_cmp(&1f64)
+    } else {
+        None
+    }
+}
+
 #[derive(Debug)]
 pub struct BaseOperators {}
 impl BaseOperators {
     fn eq(evaluatee: Option<&Value>, condition: &Value) -> bool {
         evaluatee.map(|e| e == condition).unwrap_or(false)
+    }
+    fn gt(evaluatee: Option<&Value>, condition: &Value) -> bool {
+        if let Some(evaluatee) = evaluatee {
+            matches!(
+                value_partial_cmp(evaluatee, condition),
+                Some(Ordering::Greater)
+            )
+        } else {
+            false
+        }
+    }
+    fn gte(evaluatee: Option<&Value>, condition: &Value) -> bool {
+        if let Some(evaluatee) = evaluatee {
+            matches!(
+                value_partial_cmp(evaluatee, condition),
+                Some(Ordering::Greater | Ordering::Equal)
+            )
+        } else {
+            false
+        }
+    }
+    fn lt(evaluatee: Option<&Value>, condition: &Value) -> bool {
+        if let Some(evaluatee) = evaluatee {
+            matches!(
+                value_partial_cmp(evaluatee, condition),
+                Some(Ordering::Less)
+            )
+        } else {
+            false
+        }
+    }
+    fn lte(evaluatee: Option<&Value>, condition: &Value) -> bool {
+        if let Some(evaluatee) = evaluatee {
+            matches!(
+                value_partial_cmp(evaluatee, condition),
+                Some(Ordering::Less | Ordering::Equal)
+            )
+        } else {
+            false
+        }
     }
 }
 impl OperatorProvider for BaseOperators {
@@ -257,6 +318,10 @@ impl OperatorProvider for BaseOperators {
         let mut map: HashMap<String, &'static dyn Fn(Option<&Value>, &Value) -> bool> =
             HashMap::new();
         map.insert("eq".into(), &BaseOperators::eq);
+        map.insert("gt".into(), &BaseOperators::gt);
+        map.insert("gte".into(), &BaseOperators::gte);
+        map.insert("lt".into(), &BaseOperators::lt);
+        map.insert("lte".into(), &BaseOperators::lte);
         map
     }
 }
