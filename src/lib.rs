@@ -2,7 +2,7 @@
 //!
 //! # Example
 //! ```
-//! use mongoquery_rs::{BaseQuerier, Querier};
+//! use mongoquery::{BaseQuerier, Querier};
 //! use serde_json::{Value, json};
 //!
 //! let object = json!({
@@ -45,19 +45,19 @@ pub trait OperatorProvider: Debug {
     fn get_operators() -> HashMap<String, &'static OperatorFn>;
 }
 
-/// A main interface to [mongoquery_rs](crate).
+/// A main interface to [mongoquery](crate).
 ///
 ///
 /// Start by constructing new querier:
 /// ```
-/// use mongoquery_rs::{BaseQuerier, Querier, Query};
+/// use mongoquery::{BaseQuerier, Querier, Query};
 /// use serde_json::json;
 /// // BaseQuerier implements Querier
 /// let querier: Query<_> = BaseQuerier::new(&json!({"a": 1}));
 /// ```
 /// The `Query` object returned via [Querier::new] can now be used to query against a JSON value:
 /// ```
-/// # use mongoquery_rs::{BaseQuerier, Querier, Query};
+/// # use mongoquery::{BaseQuerier, Querier, Query};
 /// # use serde_json::json;
 /// # let querier: Query<_> = BaseQuerier::new(&json!({"a": 1}));
 /// let entry = json!({"a": 1, "b": 2});

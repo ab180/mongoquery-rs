@@ -1,5 +1,5 @@
 use lazy_static::lazy_static;
-use mongoquery_rs::{BaseQuerier, Querier};
+use mongoquery::{BaseQuerier, Querier};
 use serde_json::{json, Value};
 
 lazy_static! {
