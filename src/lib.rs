@@ -1,4 +1,22 @@
-use ops::{Op, OperatorFn};
+//! An incomplete Rust port of Python's [mongoquery] library.
+//!
+//! # Example
+//! ```
+//! use mongoquery_rs::{BaseQuerier, Querier};
+//! use serde_json::{Value, json};
+//!
+//! let object = json!({
+//!     "item": "journal",
+//!     "qty": 25,
+//!     "size": { "h": 14, "w": 21, "uom": "cm" },
+//!     "status": "A"
+//! });
+//! let querier = BaseQuerier::new(&json!({ "item": "journal"}));
+//!
+//! assert!(querier.evaluate(Some(&object)).unwrap());
+//! ```
+//! [mongoquery]: https://github.com/kapouille/mongoquery
+pub use ops::{OperatorFn, Query};
 use serde_json::Value;
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -7,23 +25,51 @@ use thiserror::Error;
 
 mod ops;
 
+/// An enum that denotes possible query failure conditions.
 #[derive(Error, Debug)]
 pub enum QueryError {
+    /// An unsupported operator was encountered during query execution.
     #[error("Unsupported operator: {operator}")]
     UnsupportedOperator { operator: String },
+    /// Operator raised an error.
     #[error("Operator error: {reason} (from {operator}")]
     OperatorError { operator: String, reason: String },
 }
 
+/// A trait that provides operators to [Querier].
 pub trait OperatorProvider: Debug {
+    /// A function that provides [OperatorFn] to [Querier].  
+    ///
+    /// [Querier] calls this function at the start of the query to retrieve
+    /// all the available operators.
     fn get_operators() -> HashMap<String, &'static OperatorFn>;
 }
 
+/// A main interface to [mongoquery_rs](crate).
+///
+///
+/// Start by constructing new querier:
+/// ```
+/// use mongoquery_rs::{BaseQuerier, Querier, Query};
+/// use serde_json::json;
+/// // BaseQuerier implements Querier
+/// let querier: Query<_> = BaseQuerier::new(&json!({"a": 1}));
+/// ```
+/// The `Query` object returned via [Querier::new] can now be used to query against a JSON value:
+/// ```
+/// # use mongoquery_rs::{BaseQuerier, Querier, Query};
+/// # use serde_json::json;
+/// # let querier: Query<_> = BaseQuerier::new(&json!({"a": 1}));
+/// let entry = json!({"a": 1, "b": 2});
+/// assert!(querier.evaluate(Some(&entry)).expect("trivial query should succeed"));
+/// ```
 pub trait Querier {
+    /// An associated OperatorProvider that provides operators to this Querier.
     type Provider: OperatorProvider;
 
-    fn new(query: &Value) -> Op<Self::Provider> {
-        Op::from_value(query)
+    /// Constructs new Query object.
+    fn new(query: &Value) -> Query<Self::Provider> {
+        Query::from_value(query)
     }
 }
 
@@ -47,6 +93,7 @@ pub fn value_partial_cmp(lhs: &Value, rhs: &Value) -> Option<Ordering> {
     }
 }
 
+/// Basic [OperatorProvider] that implements some common MongoDB Query Operators.
 #[derive(Debug)]
 pub struct BaseOperators {}
 impl BaseOperators {
@@ -155,6 +202,7 @@ impl OperatorProvider for BaseOperators {
     }
 }
 
+/// An Querier that uses [BaseOperators] as its operator provider.
 pub struct BaseQuerier {}
 impl Querier for BaseQuerier {
     type Provider = BaseOperators;
