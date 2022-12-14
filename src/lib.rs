@@ -88,10 +88,20 @@ where
         ops: &HashMap<String, &OperatorFn>,
     ) -> Result<bool, QueryError> {
         Ok(match self {
-            Op::NullScalar => value.map(|v| v.is_null()).unwrap_or(false),
+            Op::NullScalar => {
+                if let Some(Value::Null) = value {
+                    true
+                } else if let Some(Value::Array(v)) = value {
+                    v.contains(&Value::Null)
+                } else {
+                    false
+                }
+            }
             Op::NumericScalar(n) => {
                 if let Some(Value::Number(input)) = value {
                     input == n
+                } else if let Some(Value::Array(v)) = value {
+                    v.contains(&Value::Number(n.clone()))
                 } else {
                     false
                 }
@@ -99,6 +109,8 @@ where
             Op::BooleanScalar(b) => {
                 if let Some(Value::Bool(input)) = value {
                     input == b
+                } else if let Some(Value::Array(v)) = value {
+                    v.contains(&Value::Bool(*b))
                 } else {
                     false
                 }
@@ -106,12 +118,16 @@ where
             Op::StringScalar(s) => {
                 if let Some(Value::String(input)) = value {
                     input == s
+                } else if let Some(Value::Array(v)) = value {
+                    v.contains(&Value::String(s.clone()))
                 } else {
                     false
                 }
             }
             Op::Sequence(seq) => {
-                if let Some(v) = value {
+                if let Some(Value::Array(v)) = value {
+                    seq == v
+                } else if let Some(v) = value {
                     seq.contains(v)
                 } else {
                     false
