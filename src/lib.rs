@@ -261,7 +261,7 @@ pub fn value_partial_cmp(lhs: &Value, rhs: &Value) -> Option<Ordering> {
         lhs.len().partial_cmp(&rhs.len())
     } else if let (Value::Bool(_), Value::Number(rhs)) = (lhs, rhs) {
         (1f64).partial_cmp(&rhs.as_f64()?)
-    } else if let (Value::Number(lhs), Value::Bool(rhs)) = (lhs, rhs) {
+    } else if let (Value::Number(lhs), Value::Bool(_)) = (lhs, rhs) {
         lhs.as_f64()?.partial_cmp(&1f64)
     } else {
         None
@@ -271,6 +271,20 @@ pub fn value_partial_cmp(lhs: &Value, rhs: &Value) -> Option<Ordering> {
 #[derive(Debug)]
 pub struct BaseOperators {}
 impl BaseOperators {
+    fn exists(evaluatee: Option<&Value>, should_exist: &Value) -> Result<bool, QueryError> {
+        if let Value::Bool(should_exist) = should_exist {
+            if *should_exist {
+                Ok(evaluatee.is_some())
+            } else {
+                Ok(evaluatee.is_none())
+            }
+        } else {
+            Err(QueryError::OperatorError {
+                operator: "exists".to_string(),
+                reason: "non-boolean condition".to_string(),
+            })
+        }
+    }
     fn eq(evaluatee: Option<&Value>, condition: &Value) -> Result<bool, QueryError> {
         Ok(evaluatee.map(|e| e == condition).unwrap_or(false))
     }
@@ -348,6 +362,7 @@ impl BaseOperators {
 impl OperatorProvider for BaseOperators {
     fn get_operators() -> HashMap<String, &'static OperatorFn> {
         let mut map: HashMap<String, &'static OperatorFn> = HashMap::new();
+        map.insert("exists".into(), &BaseOperators::exists);
         map.insert("eq".into(), &BaseOperators::eq);
         map.insert("ne".into(), &BaseOperators::ne);
         map.insert("gt".into(), &BaseOperators::gt);

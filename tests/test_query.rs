@@ -75,3 +75,37 @@ fn test_comparison() {
 
     assert_eq!(vec![&*FOOD], query(json!({"qty": {"$ne": 10}}), all()));
 }
+
+#[test]
+fn test_element() {
+    assert_eq!(all(), query(json!({"qty": {"$exists": true}}), all()));
+    assert_eq!(empty(), query(json!({"foo": {"$exists": true}}), all()));
+
+    let records = vec![
+        json!({"a": 5, "b": 5, "c": null}),
+        json!({"a": 3, "b": null, "c": 8}),
+        json!({"a": null, "b": 3, "c": 9}),
+        json!({"a": 1, "b": 2, "c": 3} ),
+        json!({"a": 2, "c": 5}),
+        json!({"a": 3, "b": 2}),
+        json!({"a": 4}),
+        json!({"b": 2, "c": 4}),
+        json!({"b": 2}),
+        json!({"c": 6}),
+    ];
+    let records_ref: Vec<_> = records.iter().collect();
+
+    assert_eq!(
+        records_ref[..7],
+        query(json!({"a": {"$exists": true}}), records_ref.clone())
+    );
+    assert_eq!(
+        vec![records_ref[4], records_ref[6], records_ref[9]],
+        query(json!({"b": {"$exists": false}}), records_ref.clone())
+    );
+
+    assert_eq!(
+        vec![records_ref[5], records_ref[6], records_ref[8]],
+        query(json!({"c": {"$exists": false}}), records_ref.clone())
+    );
+}
