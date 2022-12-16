@@ -1,6 +1,7 @@
 use lazy_static::lazy_static;
-use mongoquery::{BaseQuerier, Querier};
+use mongoquery::{BaseQuerier, CustomOperator, Querier, QueryError};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 
 lazy_static! {
     pub static ref FOOD: Value = json!({
@@ -33,6 +34,22 @@ fn query(query: Value, collection: Vec<&Value>) -> Vec<&Value> {
     collection
         .into_iter()
         .filter(|e| querier.evaluate(Some(e)).unwrap())
+        .collect()
+}
+
+fn query_custom<'a>(
+    query: Value,
+    collection: Vec<&'a Value>,
+    custom_ops: &HashMap<String, Box<dyn CustomOperator>>,
+) -> Vec<&'a Value> {
+    let querier = BaseQuerier::new(&query);
+    collection
+        .into_iter()
+        .filter(|e| {
+            querier
+                .evaluate_with_custom_ops(Some(e), custom_ops)
+                .unwrap()
+        })
         .collect()
 }
 
@@ -107,5 +124,55 @@ fn test_element() {
     assert_eq!(
         vec![records_ref[5], records_ref[6], records_ref[8]],
         query(json!({"c": {"$exists": false}}), records_ref.clone())
+    );
+}
+
+#[test]
+fn test_custom_ops() {
+    pub struct MyCustomOperator {
+        evaluatee_greater_than: i64,
+    }
+    impl CustomOperator for MyCustomOperator {
+        fn evaluate(
+            &self,
+            evaluatee: Option<&Value>,
+            _condition: &Value,
+        ) -> Result<bool, QueryError> {
+            if let Some(Value::Number(n)) = evaluatee {
+                Ok(n.as_f64().unwrap() > self.evaluatee_greater_than as f64)
+            } else {
+                Ok(false)
+            }
+        }
+    }
+
+    let records = vec![
+        json!({"a": 5, "b": 5, "c": null}),
+        json!({"a": 3, "b": null, "c": 8}),
+        json!({"a": null, "b": 3, "c": 9}),
+        json!({"a": 1, "b": 2, "c": 3} ),
+        json!({"a": 2, "c": 5}),
+        json!({"a": 3, "b": 2}),
+        json!({"a": 4}),
+        json!({"b": 2, "c": 4}),
+        json!({"b": 2}),
+        json!({"c": 6}),
+    ];
+    let records_ref: Vec<_> = records.iter().collect();
+
+    let mut custom_ops: HashMap<String, Box<dyn CustomOperator>> = HashMap::new();
+    custom_ops.insert(
+        "custom_op".to_string(),
+        Box::new(MyCustomOperator {
+            evaluatee_greater_than: 4,
+        }),
+    );
+    assert_eq!(
+        vec![records_ref[0]],
+        query_custom(
+            json!({"a": { "$custom_op": true}}),
+            records_ref,
+            &custom_ops
+        )
     );
 }

@@ -5,16 +5,24 @@ use std::convert::Infallible;
 use std::marker::PhantomData;
 use std::str::FromStr;
 
-/// A function type that represents specific MongoDB Query Operator.  
+/// A function pointer that represents specific MongoDB Query Operator.  
 ///
-/// Each operator is passed an evaluatee (a data that this operand is operating on) and a condition (specified in the query),
-/// and is expected to return a `Result<bool, QueryError>`.  
-///
-/// There are three possible variants of return value:  
-/// - If the return value is `Ok(true)`, then the evaluatee matches the condition specified by this operator.  
-/// - If the return value is `Ok(false)`, then the evaluatee does not match this operator's condition.  
-/// - If the return value is `Err(QueryError)`, the entire query fails.
-pub type OperatorFn = dyn Fn(Option<&Value>, &Value) -> Result<bool, QueryError>;
+/// See [CustomOperator::evaluate] for more details about the function signature and return value.
+pub type StandardOperator = fn(Option<&Value>, &Value) -> Result<bool, QueryError>;
+
+/// A trait that represents custom operator.
+pub trait CustomOperator {
+    /// Evaluate this operator on a specified evaluatee with the condition.
+    ///
+    /// Each operator is passed an evaluatee (a data that this operand is operating on) and a condition (specified in the query),
+    /// and is expected to return a `Result<bool, QueryError>`.  
+    ///
+    /// There are three possible variants of return value:  
+    /// - If the return value is `Ok(true)`, then the evaluatee matches the condition specified by this operator.  
+    /// - If the return value is `Ok(false)`, then the evaluatee does not match this operator's condition.  
+    /// - If the return value is `Err(QueryError)`, the entire query fails.
+    fn evaluate(&self, evaluatee: Option<&Value>, condition: &Value) -> Result<bool, QueryError>;
+}
 
 /// An object that represents MongoDB query.
 #[derive(Debug)]
@@ -69,25 +77,22 @@ where
         }
     }
 
+    /// Evaluate this query on the specified value.
     pub fn evaluate(&self, value: Option<&Value>) -> Result<bool, QueryError> {
         self.evaluate_with_custom_ops(value, &HashMap::new())
     }
     pub fn evaluate_with_custom_ops(
         &self,
         value: Option<&Value>,
-        custom_ops: &HashMap<String, &OperatorFn>,
+        custom_ops: &HashMap<String, Box<dyn CustomOperator>>,
     ) -> Result<bool, QueryError> {
-        let mut ops = T::get_operators();
-        for (op_name, op) in custom_ops {
-            ops.insert(op_name.clone(), *op);
-        }
-
-        self.evaluate_with_ops(value, &ops)
+        self.evaluate_with_ops(value, &T::get_operators(), custom_ops)
     }
     fn evaluate_with_ops(
         &self,
         value: Option<&Value>,
-        ops: &HashMap<String, &OperatorFn>,
+        std_ops: &HashMap<String, StandardOperator>,
+        custom_ops: &HashMap<String, Box<dyn CustomOperator>>,
     ) -> Result<bool, QueryError> {
         Ok(match self {
             Query::NullScalar => {
@@ -137,7 +142,7 @@ where
             }
             Query::Compound(compound) => {
                 for cond in compound {
-                    if cond.evaluate(value, ops)? == false {
+                    if cond.evaluate(value, std_ops, custom_ops)? == false {
                         return Ok(false);
                     }
                 }
@@ -188,12 +193,13 @@ where
     fn evaluate(
         &self,
         value: Option<&Value>,
-        ops: &HashMap<String, &OperatorFn>,
+        std_ops: &HashMap<String, StandardOperator>,
+        custom_ops: &HashMap<String, Box<dyn CustomOperator>>,
     ) -> Result<bool, QueryError> {
         Ok(match self {
             Condition::And(operators) => {
                 for op in operators {
-                    if op.evaluate_with_ops(value, ops)? == false {
+                    if op.evaluate_with_ops(value, std_ops, custom_ops)? == false {
                         return Ok(false);
                     }
                 }
@@ -201,7 +207,7 @@ where
             }
             Condition::Or(operators) => {
                 for op in operators {
-                    if op.evaluate_with_ops(value, ops)? == true {
+                    if op.evaluate_with_ops(value, std_ops, custom_ops)? == true {
                         return Ok(true);
                     }
                 }
@@ -209,27 +215,30 @@ where
             }
             Condition::Nor(operators) => {
                 for op in operators {
-                    if op.evaluate_with_ops(value, ops)? == true {
+                    if op.evaluate_with_ops(value, std_ops, custom_ops)? == true {
                         return Ok(false);
                     }
                 }
                 return Ok(true);
             }
-            Condition::Not { op } => !op.evaluate_with_ops(value, ops)?,
+            Condition::Not { op } => !op.evaluate_with_ops(value, std_ops, custom_ops)?,
             Condition::Field { field_name, op } => {
                 let field = extract(value, &field_name.split('.').collect::<Vec<_>>());
-                op.evaluate_with_ops(field.as_ref(), ops)?
+                op.evaluate_with_ops(field.as_ref(), std_ops, custom_ops)?
             }
             Condition::Operator {
                 operator,
                 condition,
             } => {
-                let op = *ops
-                    .get(operator)
-                    .ok_or_else(|| QueryError::UnsupportedOperator {
+                if let Some(custom_op) = custom_ops.get(operator) {
+                    custom_op.evaluate(value, condition)?
+                } else if let Some(std_op) = std_ops.get(operator) {
+                    std_op(value, condition)?
+                } else {
+                    return Err(QueryError::UnsupportedOperator {
                         operator: operator.clone(),
-                    })?;
-                op(value, condition)?
+                    });
+                }
             }
         })
     }

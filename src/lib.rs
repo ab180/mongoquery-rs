@@ -16,7 +16,7 @@
 //! assert!(querier.evaluate(Some(&object)).unwrap());
 //! ```
 //! [mongoquery]: https://github.com/kapouille/mongoquery
-pub use ops::{OperatorFn, Query};
+pub use ops::{CustomOperator, Query, StandardOperator};
 use serde_json::Value;
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -36,13 +36,13 @@ pub enum QueryError {
     OperatorError { operator: String, reason: String },
 }
 
-/// A trait that provides operators to [Querier].
+/// A trait that provides static operators to [Querier].
 pub trait OperatorProvider: Debug {
-    /// A function that provides [OperatorFn] to [Querier].  
+    /// A function that provides [StandardOperator]s to [Querier].  
     ///
-    /// [Querier] calls this function at the start of the query to retrieve
-    /// all the available operators.
-    fn get_operators() -> HashMap<String, &'static OperatorFn>;
+    /// [Querier] calls this function at the start of the query execution to retrieve
+    /// all the available standard operators.
+    fn get_operators() -> HashMap<String, StandardOperator>;
 }
 
 /// A main interface to [mongoquery](crate).
@@ -187,17 +187,17 @@ impl BaseOperators {
 }
 
 impl OperatorProvider for BaseOperators {
-    fn get_operators() -> HashMap<String, &'static OperatorFn> {
-        let mut map: HashMap<String, &'static OperatorFn> = HashMap::new();
-        map.insert("exists".into(), &BaseOperators::exists);
-        map.insert("eq".into(), &BaseOperators::eq);
-        map.insert("ne".into(), &BaseOperators::ne);
-        map.insert("gt".into(), &BaseOperators::gt);
-        map.insert("gte".into(), &BaseOperators::gte);
-        map.insert("lt".into(), &BaseOperators::lt);
-        map.insert("lte".into(), &BaseOperators::lte);
-        map.insert("in".into(), &BaseOperators::r#in);
-        map.insert("nin".into(), &BaseOperators::nin);
+    fn get_operators() -> HashMap<String, StandardOperator> {
+        let mut map: HashMap<String, StandardOperator> = HashMap::new();
+        map.insert("exists".into(), BaseOperators::exists);
+        map.insert("eq".into(), BaseOperators::eq);
+        map.insert("ne".into(), BaseOperators::ne);
+        map.insert("gt".into(), BaseOperators::gt);
+        map.insert("gte".into(), BaseOperators::gte);
+        map.insert("lt".into(), BaseOperators::lt);
+        map.insert("lte".into(), BaseOperators::lte);
+        map.insert("in".into(), BaseOperators::r#in);
+        map.insert("nin".into(), BaseOperators::nin);
         map
     }
 }
