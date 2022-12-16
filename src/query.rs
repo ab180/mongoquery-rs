@@ -1,28 +1,10 @@
+use crate::operator::{CustomOperator, StandardOperator};
 use crate::{OperatorProvider, QueryError};
 use serde_json::{Map, Number, Value};
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::marker::PhantomData;
 use std::str::FromStr;
-
-/// A function pointer that represents specific MongoDB Query Operator.  
-///
-/// See [CustomOperator::evaluate] for more details about the function signature and return value.
-pub type StandardOperator = fn(Option<&Value>, &Value) -> Result<bool, QueryError>;
-
-/// A trait that represents custom operator.
-pub trait CustomOperator {
-    /// Evaluate this operator on a specified evaluatee with the condition.
-    ///
-    /// Each operator is passed an evaluatee (a data that this operand is operating on) and a condition (specified in the query),
-    /// and is expected to return a `Result<bool, QueryError>`.  
-    ///
-    /// There are three possible variants of return value:  
-    /// - If the return value is `Ok(true)`, then the evaluatee matches the condition specified by this operator.  
-    /// - If the return value is `Ok(false)`, then the evaluatee does not match this operator's condition.  
-    /// - If the return value is `Err(QueryError)`, the entire query fails.
-    fn evaluate(&self, evaluatee: Option<&Value>, condition: &Value) -> Result<bool, QueryError>;
-}
 
 /// An object that represents MongoDB query.
 #[derive(Debug)]

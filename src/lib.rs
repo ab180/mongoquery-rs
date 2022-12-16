@@ -16,14 +16,16 @@
 //! assert!(querier.evaluate(Some(&object)).unwrap());
 //! ```
 //! [mongoquery]: https://github.com/kapouille/mongoquery
-pub use ops::{CustomOperator, Query, StandardOperator};
+pub use operator::{CustomOperator, StandardOperator};
+pub use query::Query;
 use serde_json::Value;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use thiserror::Error;
 
-mod ops;
+mod operator;
+mod query;
 
 /// An enum that denotes possible query failure conditions.
 #[derive(Error, Debug)]

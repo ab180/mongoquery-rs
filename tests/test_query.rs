@@ -1,5 +1,6 @@
 use lazy_static::lazy_static;
-use mongoquery::{BaseQuerier, CustomOperator, Querier, QueryError};
+use mongoquery::CustomOperator;
+use mongoquery::{BaseQuerier, Querier, QueryError};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
