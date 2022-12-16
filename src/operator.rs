@@ -1,5 +1,6 @@
 use crate::QueryError;
 use serde_json::Value;
+use std::collections::HashMap;
 
 /// A function pointer that represents specific MongoDB Query Operator.  
 ///
@@ -17,7 +18,7 @@ use serde_json::Value;
 /// Consider the following (contrived) example:
 /// ```
 /// use std::collections::HashMap;use serde_json::{json, Value};
-/// use mongoquery::{CustomOperator, QueryError, BaseQuerier, Querier};
+/// use mongoquery::{CustomOperator, QueryError, BaseQuerier, Querier, OperatorContainer};
 ///
 /// struct MyOperator {
 ///     evaluatee_greater_than: f64
@@ -39,10 +40,10 @@ use serde_json::Value;
 ///     evaluatee_greater_than: 4.0
 /// };
 ///
-/// let mut ops: HashMap<String, Box<dyn CustomOperator>> = HashMap::new();
-/// ops.insert("custom_op".to_string(), Box::new(my_op));
+/// let mut ops = OperatorContainer::new();
+/// ops.insert("custom_op", my_op);
 ///
-/// assert!(querier.evaluate_with_custom_ops(Some(&value), &ops));
+/// assert!(querier.evaluate_with_custom_ops(Some(&value), ops.as_ref()).unwrap());
 /// ```
 /// In this example, `my_op` stores an additional context (`evaluatee_greater_than`) that is
 /// not present in the query.
@@ -61,4 +62,33 @@ pub trait CustomOperator {
     /// - If the return value is `Ok(false)`, then the evaluatee does not match this operator's condition.  
     /// - If the return value is `Err(QueryError)`, the entire query fails.
     fn evaluate(&self, evaluatee: Option<&Value>, condition: &Value) -> Result<bool, QueryError>;
+}
+
+/// Helper struct used to construct operator-containing HashMap.
+///
+/// Use [OperatorContainer::as_ref] to convert this object to a reference of HashMap.
+pub struct OperatorContainer {
+    hashmap: HashMap<String, Box<dyn CustomOperator>>,
+}
+
+impl OperatorContainer {
+    pub fn new() -> Self {
+        Self {
+            hashmap: HashMap::new(),
+        }
+    }
+
+    pub fn insert<Op: CustomOperator + 'static>(&mut self, name: impl ToString, operator: Op) {
+        self.hashmap.insert(name.to_string(), Box::new(operator));
+    }
+
+    pub fn to_hashmap(self) -> HashMap<String, Box<dyn CustomOperator>> {
+        self.hashmap
+    }
+}
+
+impl AsRef<HashMap<String, Box<dyn CustomOperator>>> for OperatorContainer {
+    fn as_ref(&self) -> &HashMap<String, Box<dyn CustomOperator>> {
+        &self.hashmap
+    }
 }

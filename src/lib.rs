@@ -16,7 +16,7 @@
 //! assert!(querier.evaluate(Some(&object)).unwrap());
 //! ```
 //! [mongoquery]: https://github.com/kapouille/mongoquery
-pub use operator::{CustomOperator, StandardOperator};
+pub use operator::{CustomOperator, OperatorContainer, StandardOperator};
 pub use query::Query;
 use serde_json::Value;
 use std::cmp::Ordering;
