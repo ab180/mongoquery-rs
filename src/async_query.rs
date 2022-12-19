@@ -1,14 +1,16 @@
-use crate::operator::{CustomOperator, StandardOperator};
+use crate::async_operator::AsyncCustomOperator;
+use crate::operator::StandardOperator;
+use crate::query::extract;
 use crate::{OperatorProvider, QueryError};
+use async_recursion::async_recursion;
 use serde_json::{Map, Number, Value};
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::marker::PhantomData;
-use std::str::FromStr;
 
-/// An object that represents MongoDB query.
+/// An async variant of [Query](crate::Query)
 #[derive(Debug)]
-pub enum Query<T>
+pub enum AsyncQuery<T>
 where
     T: OperatorProvider,
 {
@@ -17,25 +19,25 @@ where
     BooleanScalar(bool),
     StringScalar(String),
     Sequence(Vec<Value>),
-    Compound(Vec<Condition<T>>),
+    Compound(Vec<AsyncCondition<T>>),
     _Marker(Infallible, PhantomData<T>),
 }
 
 #[derive(Debug)]
-pub enum Condition<T>
+pub enum AsyncCondition<T>
 where
     T: OperatorProvider,
 {
-    And(Vec<Query<T>>),
-    Or(Vec<Query<T>>),
-    Nor(Vec<Query<T>>),
+    And(Vec<AsyncQuery<T>>),
+    Or(Vec<AsyncQuery<T>>),
+    Nor(Vec<AsyncQuery<T>>),
     Not {
-        op: Query<T>,
+        op: AsyncQuery<T>,
     },
     /// Condition evaluation on Field
     Field {
         field_name: String,
-        op: Query<T>,
+        op: AsyncQuery<T>,
     },
     /// Non-compound operators that start with $
     Operator {
@@ -44,40 +46,43 @@ where
     },
 }
 
-impl<T> Query<T>
+impl<T> AsyncQuery<T>
 where
     T: OperatorProvider,
 {
-    pub(crate) fn from_value(v: &Value) -> Query<T> {
+    pub(crate) fn from_value(v: &Value) -> AsyncQuery<T> {
         match v {
-            Value::Null => Query::NullScalar,
-            Value::Bool(b) => Query::BooleanScalar(*b),
-            Value::Number(n) => Query::NumericScalar(n.clone()),
-            Value::String(s) => Query::StringScalar(s.clone()),
-            Value::Array(a) => Query::Sequence(a.clone()),
-            Value::Object(obj) => Query::Compound(Condition::from_map(obj)),
+            Value::Null => AsyncQuery::NullScalar,
+            Value::Bool(b) => AsyncQuery::BooleanScalar(*b),
+            Value::Number(n) => AsyncQuery::NumericScalar(n.clone()),
+            Value::String(s) => AsyncQuery::StringScalar(s.clone()),
+            Value::Array(a) => AsyncQuery::Sequence(a.clone()),
+            Value::Object(obj) => AsyncQuery::Compound(AsyncCondition::from_map(obj)),
         }
     }
 
     /// Evaluate this query on the specified value.
-    pub fn evaluate(&self, value: Option<&Value>) -> Result<bool, QueryError> {
-        self.evaluate_with_custom_ops(value, &HashMap::new())
+    pub async fn evaluate(&self, value: Option<&Value>) -> Result<bool, QueryError> {
+        self.evaluate_with_custom_ops(value, &HashMap::new()).await
     }
-    pub fn evaluate_with_custom_ops(
+
+    pub async fn evaluate_with_custom_ops(
         &self,
         value: Option<&Value>,
-        custom_ops: &HashMap<String, Box<dyn CustomOperator>>,
+        custom_ops: &HashMap<String, Box<dyn AsyncCustomOperator>>,
     ) -> Result<bool, QueryError> {
         self.evaluate_with_ops(value, &T::get_operators(), custom_ops)
+            .await
     }
-    fn evaluate_with_ops(
+
+    async fn evaluate_with_ops(
         &self,
         value: Option<&Value>,
         std_ops: &HashMap<String, StandardOperator>,
-        custom_ops: &HashMap<String, Box<dyn CustomOperator>>,
+        custom_ops: &HashMap<String, Box<dyn AsyncCustomOperator>>,
     ) -> Result<bool, QueryError> {
         Ok(match self {
-            Query::NullScalar => {
+            AsyncQuery::NullScalar => {
                 if let Some(Value::Null) = value {
                     true
                 } else if let Some(Value::Array(v)) = value {
@@ -86,7 +91,7 @@ where
                     false
                 }
             }
-            Query::NumericScalar(n) => {
+            AsyncQuery::NumericScalar(n) => {
                 if let Some(Value::Number(input)) = value {
                     input == n
                 } else if let Some(Value::Array(v)) = value {
@@ -95,7 +100,7 @@ where
                     false
                 }
             }
-            Query::BooleanScalar(b) => {
+            AsyncQuery::BooleanScalar(b) => {
                 if let Some(Value::Bool(input)) = value {
                     input == b
                 } else if let Some(Value::Array(v)) = value {
@@ -104,7 +109,7 @@ where
                     false
                 }
             }
-            Query::StringScalar(s) => {
+            AsyncQuery::StringScalar(s) => {
                 if let Some(Value::String(input)) = value {
                     input == s
                 } else if let Some(Value::Array(v)) = value {
@@ -113,7 +118,7 @@ where
                     false
                 }
             }
-            Query::Sequence(seq) => {
+            AsyncQuery::Sequence(seq) => {
                 if let Some(Value::Array(v)) = value {
                     seq == v
                 } else if let Some(v) = value {
@@ -122,49 +127,53 @@ where
                     false
                 }
             }
-            Query::Compound(compound) => {
+            AsyncQuery::Compound(compound) => {
                 for cond in compound {
-                    if cond.evaluate(value, std_ops, custom_ops)? == false {
+                    if cond.evaluate(value, std_ops, custom_ops).await? == false {
                         return Ok(false);
                     }
                 }
                 return Ok(true);
             }
-            Query::_Marker(..) => unreachable!("marker variant will never be constructed"),
+            AsyncQuery::_Marker(..) => unreachable!("marker variant will never be constructed"),
         })
     }
 }
 
-impl<T> Condition<T>
+impl<T> AsyncCondition<T>
 where
     T: OperatorProvider,
 {
-    fn from_map(map: &Map<String, Value>) -> Vec<Condition<T>> {
+    fn from_map(map: &Map<String, Value>) -> Vec<AsyncCondition<T>> {
         let mut v = Vec::with_capacity(map.len());
         for (operator, condition) in map.iter() {
             match operator.as_str() {
                 "$and" => {
-                    v.push(Condition::And(compound_condition_from_value(condition)));
+                    v.push(AsyncCondition::And(compound_condition_from_value(
+                        condition,
+                    )));
                 }
                 "$or" => {
-                    v.push(Condition::Or(compound_condition_from_value(condition)));
+                    v.push(AsyncCondition::Or(compound_condition_from_value(condition)));
                 }
                 "$nor" => {
-                    v.push(Condition::Nor(compound_condition_from_value(condition)));
+                    v.push(AsyncCondition::Nor(compound_condition_from_value(
+                        condition,
+                    )));
                 }
-                "$not" => v.push(Condition::Not {
-                    op: Query::from_value(condition),
+                "$not" => v.push(AsyncCondition::Not {
+                    op: AsyncQuery::from_value(condition),
                 }),
                 op => {
                     if let Some(stripped) = op.strip_prefix("$") {
-                        v.push(Condition::Operator {
+                        v.push(AsyncCondition::Operator {
                             operator: stripped.to_string(),
                             condition: condition.clone(),
                         })
                     } else {
-                        v.push(Condition::Field {
+                        v.push(AsyncCondition::Field {
                             field_name: op.to_string(),
-                            op: Query::from_value(condition),
+                            op: AsyncQuery::from_value(condition),
                         })
                     }
                 }
@@ -172,48 +181,51 @@ where
         }
         v
     }
-    fn evaluate(
+
+    #[async_recursion]
+    async fn evaluate(
         &self,
-        value: Option<&Value>,
+        value: Option<&'async_recursion Value>,
         std_ops: &HashMap<String, StandardOperator>,
-        custom_ops: &HashMap<String, Box<dyn CustomOperator>>,
+        custom_ops: &HashMap<String, Box<dyn AsyncCustomOperator>>,
     ) -> Result<bool, QueryError> {
         Ok(match self {
-            Condition::And(operators) => {
+            AsyncCondition::And(operators) => {
                 for op in operators {
-                    if op.evaluate_with_ops(value, std_ops, custom_ops)? == false {
+                    if op.evaluate_with_ops(value, std_ops, custom_ops).await? == false {
                         return Ok(false);
                     }
                 }
                 return Ok(true);
             }
-            Condition::Or(operators) => {
+            AsyncCondition::Or(operators) => {
                 for op in operators {
-                    if op.evaluate_with_ops(value, std_ops, custom_ops)? == true {
+                    if op.evaluate_with_ops(value, std_ops, custom_ops).await? == true {
                         return Ok(true);
                     }
                 }
                 return Ok(false);
             }
-            Condition::Nor(operators) => {
+            AsyncCondition::Nor(operators) => {
                 for op in operators {
-                    if op.evaluate_with_ops(value, std_ops, custom_ops)? == true {
+                    if op.evaluate_with_ops(value, std_ops, custom_ops).await? == true {
                         return Ok(false);
                     }
                 }
                 return Ok(true);
             }
-            Condition::Not { op } => !op.evaluate_with_ops(value, std_ops, custom_ops)?,
-            Condition::Field { field_name, op } => {
+            AsyncCondition::Not { op } => !op.evaluate_with_ops(value, std_ops, custom_ops).await?,
+            AsyncCondition::Field { field_name, op } => {
                 let field = extract(value, &field_name.split('.').collect::<Vec<_>>());
-                op.evaluate_with_ops(field.as_ref(), std_ops, custom_ops)?
+                op.evaluate_with_ops(field.as_ref(), std_ops, custom_ops)
+                    .await?
             }
-            Condition::Operator {
+            AsyncCondition::Operator {
                 operator,
                 condition,
             } => {
                 if let Some(custom_op) = custom_ops.get(operator) {
-                    custom_op.evaluate(value, condition)?
+                    custom_op.evaluate(value, condition).await?
                 } else if let Some(std_op) = std_ops.get(operator) {
                     std_op(value, condition)?
                 } else {
@@ -226,41 +238,12 @@ where
     }
 }
 
-// TODO: maybe apply Cow?
-pub(crate) fn extract(entry: Option<&Value>, path: &[&str]) -> Option<Value> {
-    if path.is_empty() {
-        return entry.map(|x| x.clone());
-    }
-    if let Some(value) = entry {
-        match value {
-            Value::Null => Some(Value::Null),
-            Value::Array(arr) => {
-                if let Ok(v) = i64::from_str(path[0]) {
-                    // index-based indexing
-                    extract(arr.get(v as usize), &path[1..])
-                } else {
-                    // key-based nested document parallel indexing
-                    let mut v = Vec::with_capacity(arr.len());
-                    for e in arr.iter() {
-                        v.push(extract(Some(e), path)?);
-                    }
-                    Some(Value::Array(v))
-                }
-            }
-            Value::Object(obj) => extract(obj.get(path[0]), &path[1..]),
-            _ => None,
-        }
-    } else {
-        None
-    }
-}
-
-fn compound_condition_from_value<T>(v: &Value) -> Vec<Query<T>>
+fn compound_condition_from_value<T>(v: &Value) -> Vec<AsyncQuery<T>>
 where
     T: OperatorProvider,
 {
     match v {
-        Value::Array(vec) => vec.iter().map(Query::from_value).collect(),
+        Value::Array(vec) => vec.iter().map(AsyncQuery::from_value).collect(),
         _ => vec![],
     }
 }

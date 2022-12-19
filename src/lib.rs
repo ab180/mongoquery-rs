@@ -16,6 +16,8 @@
 //! assert!(querier.evaluate(Some(&object)).unwrap());
 //! ```
 //! [mongoquery]: https://github.com/kapouille/mongoquery
+pub use async_operator::{AsyncCustomOperator, AsyncOperatorContainer};
+pub use async_query::AsyncQuery;
 pub use operator::{CustomOperator, OperatorContainer, StandardOperator};
 pub use query::Query;
 use serde_json::Value;
@@ -24,6 +26,8 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use thiserror::Error;
 
+mod async_operator;
+mod async_query;
 mod operator;
 mod query;
 
@@ -39,7 +43,7 @@ pub enum QueryError {
 }
 
 /// A trait that provides static operators to [Querier].
-pub trait OperatorProvider: Debug {
+pub trait OperatorProvider: Debug + Send + Sync {
     /// A function that provides [StandardOperator]s to [Querier].  
     ///
     /// [Querier] calls this function at the start of the query execution to retrieve
@@ -72,6 +76,16 @@ pub trait Querier {
     /// Constructs new Query object.
     fn new(query: &Value) -> Query<Self::Provider> {
         Query::from_value(query)
+    }
+}
+
+pub trait AsyncQuerier {
+    /// An associated OperatorProvider that provides operators to this Querier.
+    type Provider: OperatorProvider;
+
+    /// Constructs new Query object.
+    fn new(query: &Value) -> AsyncQuery<Self::Provider> {
+        AsyncQuery::from_value(query)
     }
 }
 
@@ -207,6 +221,11 @@ impl OperatorProvider for BaseOperators {
 /// An Querier that uses [BaseOperators] as its operator provider.
 pub struct BaseQuerier {}
 impl Querier for BaseQuerier {
+    type Provider = BaseOperators;
+}
+
+pub struct AsyncBaseQuerier {}
+impl AsyncQuerier for AsyncBaseQuerier {
     type Provider = BaseOperators;
 }
 
