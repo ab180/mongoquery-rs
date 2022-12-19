@@ -41,3 +41,9 @@ impl AsRef<HashMap<String, Box<dyn AsyncCustomOperator>>> for AsyncOperatorConta
         &self.hashmap
     }
 }
+
+impl Default for AsyncOperatorContainer {
+    fn default() -> Self {
+        Self::new()
+    }
+}

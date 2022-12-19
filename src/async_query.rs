@@ -165,7 +165,7 @@ where
                     op: AsyncQuery::from_value(condition),
                 }),
                 op => {
-                    if let Some(stripped) = op.strip_prefix("$") {
+                    if let Some(stripped) = op.strip_prefix('$') {
                         v.push(AsyncCondition::Operator {
                             operator: stripped.to_string(),
                             condition: condition.clone(),

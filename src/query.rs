@@ -229,7 +229,7 @@ where
 // TODO: maybe apply Cow?
 pub(crate) fn extract(entry: Option<&Value>, path: &[&str]) -> Option<Value> {
     if path.is_empty() {
-        return entry.map(|x| x.clone());
+        return entry.cloned();
     }
     if let Some(value) = entry {
         match value {

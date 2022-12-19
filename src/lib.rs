@@ -184,7 +184,7 @@ impl BaseOperators {
                             }
                         }
                     }
-                    return Ok(false);
+                    Ok(false)
                 }
                 Some(v) => Ok(cond.contains(v)),
                 None => Ok(false),

@@ -92,3 +92,9 @@ impl AsRef<HashMap<String, Box<dyn CustomOperator>>> for OperatorContainer {
         &self.hashmap
     }
 }
+
+impl Default for OperatorContainer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
