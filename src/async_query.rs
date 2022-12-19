@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::convert::Infallible;
 use std::marker::PhantomData;
 
-/// An async variant of [Query](crate::Query)
+/// An async variant of [Query](crate::Query).
 #[derive(Debug)]
 pub enum AsyncQuery<T>
 where

@@ -79,6 +79,7 @@ pub trait Querier {
     }
 }
 
+/// An async variant of [Querier].
 pub trait AsyncQuerier {
     /// An associated OperatorProvider that provides operators to this Querier.
     type Provider: OperatorProvider;
@@ -224,6 +225,7 @@ impl Querier for BaseQuerier {
     type Provider = BaseOperators;
 }
 
+/// An AsyncQuerier that uses [BaseOperator] as its operator provider.
 pub struct AsyncBaseQuerier {}
 impl AsyncQuerier for AsyncBaseQuerier {
     type Provider = BaseOperators;
